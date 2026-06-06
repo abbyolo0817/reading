@@ -188,7 +188,7 @@ body::after {
 .url-input::placeholder { color: #aaa8a2; }
 
 @media (max-width: 639px) {
-  .input-row { flex-direction: column; align-items: flex-start; }
+  .input-row { flex-direction: column; align-items: center; }
   .url-input { width: 100%; }
 }
 
@@ -1760,21 +1760,45 @@ async function processArticle(url) {
 }
 
 // ===== FETCH ARTICLE TEXT =====
-async function fetchArticleText(url) {
-  // Try direct fetch first (same-origin or CORS-allowed sites)
-  let html = '';
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (res.ok) html = await res.text();
-  } catch { /* will try proxy */ }
+function fetchWithTimeout(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
 
+async function fetchArticleText(url) {
+  let html = '';
+
+  // 1. Direct fetch (fast, works for CORS-friendly sites)
+  try {
+    const res = await fetchWithTimeout(url, 8000);
+    if (res.ok) html = await res.text();
+  } catch { /* try proxy */ }
+
+  // 2. Primary CORS proxy
   if (!html) {
-    const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxy, { signal: AbortSignal.timeout(15000) });
-    const data = await res.json();
-    html = data.contents || '';
+    try {
+      const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const res = await fetchWithTimeout(proxy, 30000);
+      const data = await res.json();
+      html = data.contents || '';
+    } catch(e) {
+      if (e.name === 'AbortError') {
+        throw new Error('文章抓取逾時（超過 30 秒）。請確認網址是否正確，或該網站可能封鎖了外部讀取。');
+      }
+    }
   }
 
+  // 3. Backup proxy
+  if (!html) {
+    try {
+      const backup = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+      const res = await fetchWithTimeout(backup, 25000);
+      if (res.ok) html = await res.text();
+    } catch { /* give up */ }
+  }
+
+  if (!html) throw new Error('無法取得文章內容。可能是網站封鎖了外部讀取，請嘗試其他連結。');
   return extractTextFromHtml(html);
 }
 
@@ -2213,15 +2237,23 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeReader();
 });
 
-// touch swipe
+// touch swipe — only horizontal, skip if text is selected
+let touchStartY = 0;
 const readerBook = document.querySelector('.reader-book');
 readerBook.addEventListener('touchstart', e => {
   touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
 }, { passive: true });
 readerBook.addEventListener('touchend', e => {
-  const delta = e.changedTouches[0].clientX - touchStartX;
-  if (Math.abs(delta) > 50) {
-    if (delta < 0) document.getElementById('nav-next').click();
+  // abort if user selected text (螢光筆標記)
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
+
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  // only treat as swipe if horizontal motion dominates and exceeds 55px
+  if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.8) {
+    if (dx < 0) document.getElementById('nav-next').click();
     else document.getElementById('nav-prev').click();
   }
 }, { passive: true });
