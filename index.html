@@ -4,8 +4,36 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 閱讀</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Patrick+Hand&display=swap" rel="stylesheet">
+<style>
+@font-face {
+  font-family: 'LINE Seed TW';
+  src: url('字型/LINESeedTW_TTF_Th.ttf') format('truetype');
+  font-weight: 300;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'LINE Seed TW';
+  src: url('字型/LINESeedTW_TTF_Rg.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'LINE Seed TW';
+  src: url('字型/LINESeedTW_TTF_Bd.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'LINE Seed TW';
+  src: url('字型/LINESeedTW_TTF_Eb.ttf') format('truetype');
+  font-weight: 800;
+  font-display: swap;
+}
+</style>
+<!-- Firebase SDKs (compat mode, works without bundler) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 /* ===== DESIGN TOKENS (手繪塗鴉) ===== */
 :root {
@@ -20,8 +48,8 @@
   --hd-pink: #e8779e;
   --hd-highlighter: rgba(247, 200, 75, 0.5);
   --radius-rough: 24px 18px 22px 16px / 16px 22px 18px 24px;
-  --font-display: 'Comic Sans MS', 'Marker Felt', 'Patrick Hand', 'PingFang TC', 'Noto Sans TC', sans-serif;
-  --font-body: 'Noto Sans TC', 'PingFang TC', 'Patrick Hand', system-ui, sans-serif;
+  --font-display: 'LINE Seed TW', 'PingFang TC', 'Noto Sans TC', sans-serif;
+  --font-body: 'LINE Seed TW', 'PingFang TC', 'Noto Sans TC', sans-serif;
 }
 
 /* ===== RESET & BASE ===== */
@@ -63,9 +91,10 @@ body::after {
 .container {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 16px;
   position: relative;
   z-index: 1;
+  min-width: 0;
 }
 
 /* ===== HEADER ===== */
@@ -157,6 +186,11 @@ body::after {
   border-color: var(--hd-blue);
 }
 .url-input::placeholder { color: #aaa8a2; }
+
+@media (max-width: 639px) {
+  .input-row { flex-direction: column; }
+  .url-input { width: 100%; }
+}
 
 .btn-hand {
   background: var(--hd-red);
@@ -800,6 +834,290 @@ body::after {
   background: repeating-linear-gradient(90deg, var(--hd-pencil) 0, var(--hd-pencil) 4px, transparent 4px, transparent 8px);
   opacity: 0.3;
 }
+
+/* ===== READING PROGRESS BADGE ===== */
+.progress-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+.progress-badge.not-started { background: rgba(90,86,77,0.12); color: var(--hd-pencil); }
+.progress-badge.reading     { background: rgba(232,119,30,0.15); color: #b85c00; }
+.progress-badge.completed   { background: rgba(79,181,133,0.2);  color: #227a50; }
+
+/* ===== HIGHLIGHTER MARK ===== */
+mark.reader-highlight {
+  background: var(--hd-highlighter);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  cursor: pointer;
+  position: relative;
+}
+mark.reader-highlight:hover { background: rgba(247,200,75,0.8); }
+mark.reader-highlight:hover::after {
+  content: '✕ 移除';
+  position: absolute;
+  top: -26px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--hd-ink);
+  color: white;
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ===== FLOATING HIGHLIGHT BUTTON ===== */
+.highlight-popup {
+  position: fixed;
+  z-index: 350;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background: var(--hd-ink);
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.highlight-popup.visible { display: flex; }
+.highlight-popup:hover { background: #111; }
+
+/* ===== COLLECTION OVERLAY ===== */
+.collection-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(45,42,38,0.45);
+  z-index: 280;
+  display: none;
+  justify-content: flex-end;
+}
+.collection-overlay.visible { display: flex; }
+
+.collection-panel {
+  background: var(--hd-paper);
+  background-image:
+    linear-gradient(var(--hd-paper-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hd-paper-grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+  width: 100%;
+  max-width: 440px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-left: 2.5px solid var(--hd-ink);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.12);
+}
+
+@media (max-width: 639px) {
+  .collection-overlay { align-items: flex-end; }
+  .collection-panel {
+    max-width: 100%;
+    height: 85dvh;
+    border-left: none;
+    border-top: 2.5px solid var(--hd-ink);
+    border-radius: 20px 20px 0 0;
+  }
+}
+
+.collection-header {
+  padding: 20px 20px 14px;
+  border-bottom: 2px dashed rgba(45,42,38,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.collection-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--hd-ink);
+}
+.collection-close {
+  background: none;
+  border: 2px solid var(--hd-ink);
+  border-radius: 50%;
+  width: 30px; height: 30px;
+  cursor: pointer;
+  font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--hd-ink);
+}
+.collection-close:hover { background: #fde8e6; border-color: var(--hd-red); color: var(--hd-red); }
+
+.collection-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.collection-empty {
+  text-align: center;
+  padding: 48px 16px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--hd-pencil);
+  opacity: 0.6;
+}
+
+.highlight-card {
+  background: rgba(247,200,75,0.22);
+  border: 1.5px solid rgba(247,200,75,0.6);
+  border-radius: 14px 10px 12px 16px / 10px 14px 16px 12px;
+  padding: 14px 16px;
+  position: relative;
+}
+.highlight-quote {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--hd-ink);
+  margin-bottom: 8px;
+  border-left: 3px solid var(--hd-yellow);
+  padding-left: 10px;
+}
+.highlight-meta {
+  font-size: 11px;
+  color: var(--hd-pencil);
+  font-family: var(--font-display);
+  opacity: 0.8;
+}
+.highlight-del {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--hd-pencil);
+  opacity: 0.4;
+  line-height: 1;
+}
+.highlight-del:hover { opacity: 1; color: var(--hd-red); }
+
+/* ===== HEADER RIGHT GROUP ===== */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* ===== AUTH UI ===== */
+.login-btn {
+  background: white;
+  border: 2px solid var(--hd-ink);
+  border-radius: 22px 18px 20px 24px / 18px 22px 24px 20px;
+  padding: 8px 14px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--hd-ink);
+  box-shadow: 3px 3px 0 var(--hd-ink);
+  transition: transform 0.15s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.login-btn:hover { transform: translateY(-2px); }
+
+.user-chip {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background: white;
+  border: 2px solid var(--hd-ink);
+  border-radius: 24px;
+  padding: 4px 12px 4px 4px;
+  box-shadow: 3px 3px 0 rgba(45,42,38,0.15);
+}
+.user-chip.visible { display: flex; }
+.user-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.user-name-text {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--hd-ink);
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.logout-btn {
+  background: none;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--hd-pencil);
+  font-family: var(--font-display);
+  padding: 0;
+  white-space: nowrap;
+}
+.logout-btn:hover { color: var(--hd-red); }
+
+@media (max-width: 639px) {
+  .user-name-text { display: none; }
+  .logout-btn { display: none; }
+  .login-btn .login-text { display: none; }
+}
+
+/* collection btn in header */
+.collection-btn {
+  background: none;
+  border: 2.5px solid var(--hd-ink);
+  border-radius: 50% 45% 55% 42% / 45% 55% 42% 55%;
+  width: 44px; height: 44px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.2s, background 0.15s;
+  flex-shrink: 0;
+  box-shadow: 3px 3px 0 var(--hd-ink);
+  position: relative;
+}
+.collection-btn:hover { background: var(--hd-yellow); }
+.collection-btn svg { width: 20px; height: 20px; }
+.collection-badge {
+  position: absolute;
+  top: -5px; right: -5px;
+  background: var(--hd-red);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.collection-badge.visible { display: flex; }
 </style>
 </head>
 <body>
@@ -845,6 +1163,22 @@ body::after {
   </div>
 </div>
 
+<!-- ===== FLOATING HIGHLIGHT BUTTON ===== -->
+<button class="highlight-popup" id="highlight-popup">✦ 螢光筆標記</button>
+
+<!-- ===== COLLECTION OVERLAY ===== -->
+<div class="collection-overlay" id="collection-overlay">
+  <div class="collection-panel">
+    <div class="collection-header">
+      <div class="collection-title">✦ 我的螢光筆收藏</div>
+      <button class="collection-close" id="collection-close">✕</button>
+    </div>
+    <div class="collection-body" id="collection-body">
+      <div class="collection-empty">還沒有標記任何句子<br>在閱讀器裡框選文字即可加入！</div>
+    </div>
+  </div>
+</div>
+
 <!-- ===== READER OVERLAY ===== -->
 <div class="reader-overlay" id="reader-overlay">
   <div class="reader-book">
@@ -885,12 +1219,37 @@ body::after {
       <div class="app-title"><span>AI 閱讀</span></div>
       <div class="title-deco">貼上連結，讓 AI 幫你讀完它 ✦</div>
     </div>
-    <button class="settings-btn" id="settings-open" title="設定 API Key">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    </button>
+    <div class="header-right">
+      <!-- Google login / user chip -->
+      <button class="login-btn" id="login-btn">
+        <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+          <path d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34.3 6.5 29.4 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 20-8.9 20-20 0-1.2-.1-2.5-.4-3.5z" fill="#FFC107"/>
+          <path d="M6.3 14.7l6.6 4.8C14.6 16.1 19 13 24 13c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34.3 7.5 29.4 5 24 5 16.3 5 9.7 9 6.3 14.7z" fill="#FF3D00"/>
+          <path d="M24 43c5.3 0 10.1-2 13.7-5.2l-6.3-5.3C29.6 34.4 26.9 35 24 35c-5.3 0-9.7-3.3-11.3-8H6.3A20 20 0 0 0 24 43z" fill="#4CAF50"/>
+          <path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4-4.1 5.3l6.3 5.3C37 38 44 33 44 24c0-1.2-.1-2.5-.4-3.5z" fill="#1976D2"/>
+        </svg>
+        <span class="login-text">Google 登入</span>
+      </button>
+      <div class="user-chip" id="user-chip">
+        <img class="user-avatar" id="user-avatar" src="" alt="">
+        <span class="user-name-text" id="user-name"></span>
+        <button class="logout-btn" id="logout-btn">登出</button>
+      </div>
+      <!-- collection star -->
+      <button class="collection-btn" id="collection-open" title="螢光筆收藏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+        <span class="collection-badge" id="collection-badge"></span>
+      </button>
+      <!-- settings gear -->
+      <button class="settings-btn" id="settings-open" title="設定 API Key">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <section class="input-section">
@@ -935,13 +1294,170 @@ body::after {
 </div>
 
 <script>
+// ===== FIREBASE INIT =====
+const firebaseConfig = {
+  apiKey: "AIzaSyAkfXRNup3Rn_O7qooXWX3wAD4VLKOsI3M",
+  authDomain: "ai-reader-4c8ca.firebaseapp.com",
+  projectId: "ai-reader-4c8ca",
+  storageBucket: "ai-reader-4c8ca.firebasestorage.app",
+  messagingSenderId: "618002053331",
+  appId: "1:618002053331:web:1752bd210303f081b13c26"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+let currentUser = null;
+
+// ===== FIRESTORE HELPERS =====
+function userCol(name) {
+  return db.collection('users').doc(currentUser.uid).collection(name);
+}
+async function fsPush(col, id, data) {
+  if (!currentUser) return;
+  userCol(col).doc(id).set(data).catch(e => console.warn('fs write', e));
+}
+async function fsRemove(col, id) {
+  if (!currentUser) return;
+  userCol(col).doc(id).delete().catch(e => console.warn('fs delete', e));
+}
+async function fsGetAll(col, orderField) {
+  let q = userCol(col);
+  if (orderField) q = q.orderBy(orderField, 'desc');
+  const snap = await q.get();
+  return snap.docs.map(d => d.data());
+}
+
+async function pullFromFirestore() {
+  try {
+    // Items
+    const fsItems = await fsGetAll('items', 'dateAdded');
+    const local = loadItems();
+    const fsIds = new Set(fsItems.map(i => i.id));
+    const onlyLocal = local.filter(i => !fsIds.has(i.id));
+    const merged = [...fsItems, ...onlyLocal].sort((a,b) => new Date(b.dateAdded)-new Date(a.dateAdded));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    for (const item of onlyLocal) fsPush('items', item.id, item);
+
+    // Progress
+    const progSnap = await userCol('progress').get();
+    const fsProgress = {};
+    progSnap.docs.forEach(d => { fsProgress[d.id] = d.data(); });
+    const localProg = getProgressData();
+    localStorage.setItem(PROGRESS_STORAGE, JSON.stringify({ ...localProg, ...fsProgress }));
+
+    // Highlights
+    const fsHL = await fsGetAll('highlights', 'dateAdded');
+    const localHL = getHighlights();
+    const fsHIds = new Set(fsHL.map(h => h.id));
+    const onlyLocalHL = localHL.filter(h => !fsHIds.has(h.id));
+    const mergedHL = [...fsHL, ...onlyLocalHL].sort((a,b) => new Date(b.dateAdded)-new Date(a.dateAdded));
+    localStorage.setItem(HIGHLIGHTS_STORAGE, JSON.stringify(mergedHL));
+    for (const h of onlyLocalHL) fsPush('highlights', h.id, h);
+
+    // Settings (Gemini key + model)
+    const settingsDoc = await db.collection('users').doc(currentUser.uid)
+      .collection('settings').doc('main').get();
+    if (settingsDoc.exists) {
+      const s = settingsDoc.data();
+      if (s.geminiKey) localStorage.setItem(API_KEY_STORAGE, s.geminiKey);
+      if (s.model) localStorage.setItem(MODEL_STORAGE, s.model);
+    }
+  } catch(e) { console.warn('Firestore pull failed:', e); }
+}
+
+function fsSaveSettings() {
+  if (!currentUser) return;
+  db.collection('users').doc(currentUser.uid).collection('settings').doc('main').set({
+    geminiKey: getApiKey(),
+    model: getModel(),
+  }, { merge: true }).catch(() => {});
+}
+
+// ===== AUTH STATE =====
+auth.onAuthStateChanged(async user => {
+  currentUser = user;
+  updateAuthUI(user);
+  if (user) {
+    await pullFromFirestore();
+    renderCards();
+    updateCollectionBadge();
+    updateApiStatus(getApiKey());
+  }
+});
+
+function updateAuthUI(user) {
+  const loginBtn = document.getElementById('login-btn');
+  const chip = document.getElementById('user-chip');
+  if (user) {
+    loginBtn.style.display = 'none';
+    chip.classList.add('visible');
+    const av = document.getElementById('user-avatar');
+    if (user.photoURL) av.src = user.photoURL;
+    document.getElementById('user-name').textContent = (user.displayName || '').split(' ')[0] || '使用者';
+  } else {
+    loginBtn.style.display = 'flex';
+    chip.classList.remove('visible');
+  }
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  try { await auth.signInWithPopup(provider); }
+  catch(e) { if (e.code !== 'auth/popup-closed-by-user') showError('登入失敗：' + (e.message || e.code)); }
+});
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  if (!confirm('確定登出？')) return;
+  await auth.signOut();
+  currentUser = null;
+  updateAuthUI(null);
+});
+
 // ===== CONSTANTS =====
 const STORAGE_KEY = 'ai_reader_items';
 const API_KEY_STORAGE = 'gemini_key';
 const MODEL_STORAGE = 'gemini_model';
+const PROGRESS_STORAGE = 'ai_reader_progress';
+const HIGHLIGHTS_STORAGE = 'ai_reader_highlights';
 const CARD_COLORS = ['color-yellow', 'color-pink', 'color-blue', 'color-green'];
 function getModel() { return localStorage.getItem(MODEL_STORAGE) || 'gemini-3.5-flash'; }
 function setModel(m) { localStorage.setItem(MODEL_STORAGE, m); }
+
+// ===== PROGRESS STORAGE =====
+function getProgressData() {
+  try { return JSON.parse(localStorage.getItem(PROGRESS_STORAGE) || '{}'); } catch { return {}; }
+}
+function getItemProgress(itemId) {
+  return getProgressData()[itemId] || { status: 'not_started', lastPage: 0 };
+}
+function setItemProgress(itemId, status, lastPage) {
+  const data = getProgressData();
+  data[itemId] = { status, lastPage };
+  localStorage.setItem(PROGRESS_STORAGE, JSON.stringify(data));
+  fsPush('progress', itemId, { status, lastPage });
+}
+
+// ===== HIGHLIGHTS STORAGE =====
+function getHighlights() {
+  try { return JSON.parse(localStorage.getItem(HIGHLIGHTS_STORAGE) || '[]'); } catch { return []; }
+}
+function addHighlight(itemId, itemTitle, pageIndex, pageTitle, text) {
+  const h = { id: generateId(), itemId, itemTitle, pageIndex, pageTitle, text, dateAdded: new Date().toISOString() };
+  const all = getHighlights();
+  all.unshift(h);
+  localStorage.setItem(HIGHLIGHTS_STORAGE, JSON.stringify(all));
+  fsPush('highlights', h.id, h);
+}
+function deleteHighlight(id) {
+  localStorage.setItem(HIGHLIGHTS_STORAGE, JSON.stringify(getHighlights().filter(h => h.id !== id)));
+  fsRemove('highlights', id);
+}
+
+const PROGRESS_LABEL = {
+  not_started: { text: '尚未開始', cls: 'not-started', icon: '○' },
+  reading:     { text: '閱讀中',   cls: 'reading',     icon: '◑' },
+  completed:   { text: '閱讀完畢', cls: 'completed',   icon: '●' },
+};
 
 // ===== STATE =====
 let readerItem = null;
@@ -1257,6 +1773,7 @@ async function handleSubmit() {
     const items = loadItems();
     items.unshift(item);
     saveItems(items);
+    fsPush('items', item.id, item);
     renderCards();
     document.getElementById('url-input').value = '';
     clearLoading();
@@ -1291,11 +1808,14 @@ function renderCards() {
       ? `<img class="card-thumb" src="${escHtml(item.thumbnail)}" alt="" onerror="this.style.display='none'">`
       : `<div class="card-thumb-placeholder">${item.type === 'youtube' ? '▶' : '📄'}</div>`;
 
+    const prog = getItemProgress(item.id);
+    const pl = PROGRESS_LABEL[prog.status];
     return `<div class="card ${color}" data-id="${item.id}" role="button" tabindex="0" aria-label="開啟 ${escHtml(item.title)}">
   ${thumbHtml}
   <div class="card-body">
     <div class="card-type-badge">${typeLabel}</div>
     <div class="card-title">${escHtml(item.title)}</div>
+    <span class="progress-badge ${pl.cls}">${pl.icon} ${pl.text}</span>
     <div class="card-meta">
       <span>${dateStr}</span>
       <span class="card-pages-badge">${pageCount} 頁</span>
@@ -1327,13 +1847,20 @@ function deleteCard(id, e) {
   if (!confirm('確定刪除這張卡片？')) return;
   const items = loadItems().filter(it => it.id !== id);
   saveItems(items);
+  fsRemove('items', id);
   renderCards();
 }
 
 // ===== READER =====
 function openReader(item) {
   readerItem = item;
-  readerPage = 0;
+  // restore last page
+  const prog = getItemProgress(item.id);
+  readerPage = prog.lastPage || 0;
+  // mark as reading (if not already completed)
+  if (prog.status !== 'completed') {
+    setItemProgress(item.id, 'reading', readerPage);
+  }
   buildProgressDots();
   renderReaderPage();
   document.getElementById('reader-source-link').href = item.url;
@@ -1389,13 +1916,39 @@ function renderReaderPage() {
     const idx = readerPage - 1;
     const page = pages[idx];
     if (!page) return;
+    // apply highlights to body text
+    const bodyHtml = applyHighlightsToText(
+      escHtml(page.content).replace(/\n/g, '<br>'),
+      getHighlights().filter(h => h.itemId === readerItem.id && h.pageIndex === idx)
+    );
     pageEl.innerHTML = `<div class="page-content">
   <div class="page-chapter-num">第 ${readerPage} 頁 / 共 ${pages.length} 頁</div>
   <div class="page-title">${escHtml(page.title)}</div>
   <div class="page-divider"><span class="page-divider-star">✦</span></div>
-  <div class="page-body">${escHtml(page.content).replace(/\n/g, '<br>')}</div>
+  <div class="page-body">${bodyHtml}</div>
 </div>`;
     document.getElementById('page-label').textContent = `第 ${readerPage} 頁 / 共 ${pages.length} 頁`;
+
+    // bind highlight remove clicks
+    pageEl.querySelectorAll('mark.reader-highlight').forEach(mark => {
+      mark.addEventListener('click', e => {
+        e.stopPropagation();
+        const hid = mark.dataset.hid;
+        if (hid && confirm('移除這個螢光筆標記？')) {
+          deleteHighlight(hid);
+          renderReaderPage();
+          updateCollectionBadge();
+        }
+      });
+    });
+  }
+
+  // track progress
+  if (readerItem) {
+    const isLastPage = readerPage === total - 1;
+    const newStatus = isLastPage ? 'completed' : 'reading';
+    setItemProgress(readerItem.id, newStatus, readerPage);
+    renderCards(); // refresh badge on card
   }
 
   // update nav buttons
@@ -1409,7 +1962,130 @@ function renderReaderPage() {
 
   // scroll to top
   pageEl.scrollTop = 0;
+  hideHighlightPopup();
 }
+
+// ===== HIGHLIGHT HELPERS =====
+function applyHighlightsToText(escapedHtml, highlights) {
+  let result = escapedHtml;
+  highlights.forEach(h => {
+    const escapedText = escHtml(h.text);
+    // escape regex special chars
+    const pattern = escapedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(pattern, 'g');
+    result = result.replace(regex,
+      `<mark class="reader-highlight" data-hid="${h.id}">${escapedText}</mark>`);
+  });
+  return result;
+}
+
+// ===== FLOATING HIGHLIGHT BUTTON =====
+let pendingHighlightText = '';
+
+function showHighlightPopup(x, y, text) {
+  pendingHighlightText = text;
+  const btn = document.getElementById('highlight-popup');
+  btn.style.left = `${x}px`;
+  btn.style.top  = `${y - 44}px`;
+  btn.classList.add('visible');
+}
+function hideHighlightPopup() {
+  document.getElementById('highlight-popup').classList.remove('visible');
+  pendingHighlightText = '';
+}
+
+document.getElementById('reader-page').addEventListener('mouseup', handleTextSelection);
+document.getElementById('reader-page').addEventListener('touchend', handleTextSelection);
+
+function handleTextSelection() {
+  setTimeout(() => {  // let selection settle
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) { hideHighlightPopup(); return; }
+    const text = sel.toString().trim();
+    if (text.length < 2 || readerPage === 0) { hideHighlightPopup(); return; }
+    // only allow selection inside .page-body
+    const range = sel.getRangeAt(0);
+    const pageBody = document.querySelector('.page-body');
+    if (!pageBody || !pageBody.contains(range.commonAncestorContainer)) {
+      hideHighlightPopup(); return;
+    }
+    const rect = range.getBoundingClientRect();
+    showHighlightPopup(rect.left + rect.width / 2, rect.top, text);
+  }, 10);
+}
+
+document.getElementById('highlight-popup').addEventListener('click', () => {
+  if (!pendingHighlightText || !readerItem || readerPage === 0) return;
+  const pages = readerItem.pages || [];
+  const pageIndex = readerPage - 1;
+  const pageTitle = pages[pageIndex]?.title || '';
+  addHighlight(readerItem.id, readerItem.title, pageIndex, pageTitle, pendingHighlightText);
+  window.getSelection()?.removeAllRanges();
+  hideHighlightPopup();
+  renderReaderPage();
+  updateCollectionBadge();
+  if (document.getElementById('collection-overlay').classList.contains('visible')) {
+    renderCollectionPanel();
+  }
+});
+
+// hide on click outside
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('#highlight-popup') && !e.target.closest('.page-body')) {
+    hideHighlightPopup();
+  }
+});
+
+// ===== COLLECTION PANEL =====
+function updateCollectionBadge() {
+  const count = getHighlights().length;
+  const badge = document.getElementById('collection-badge');
+  badge.textContent = count > 99 ? '99+' : count;
+  badge.classList.toggle('visible', count > 0);
+}
+
+function openCollection() {
+  renderCollectionPanel();
+  document.getElementById('collection-overlay').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+}
+function closeCollection() {
+  document.getElementById('collection-overlay').classList.remove('visible');
+  if (!document.getElementById('reader-overlay').classList.contains('visible')) {
+    document.body.style.overflow = '';
+  }
+}
+
+function renderCollectionPanel() {
+  const highlights = getHighlights();
+  const body = document.getElementById('collection-body');
+  if (!highlights.length) {
+    body.innerHTML = '<div class="collection-empty">還沒有標記任何句子<br>在閱讀器裡框選文字即可加入！</div>';
+    return;
+  }
+  body.innerHTML = highlights.map(h => `
+<div class="highlight-card" data-hid="${h.id}">
+  <button class="highlight-del" onclick="removeHighlightFromPanel('${h.id}')">✕</button>
+  <div class="highlight-quote">${escHtml(h.text)}</div>
+  <div class="highlight-meta">
+    ${escHtml(h.itemTitle)} · ${escHtml(h.pageTitle || `第 ${(h.pageIndex||0)+1} 頁`)}
+  </div>
+</div>`).join('');
+}
+
+function removeHighlightFromPanel(id) {
+  deleteHighlight(id);
+  renderCollectionPanel();
+  updateCollectionBadge();
+  // if reader is open on same page, re-render it
+  if (readerItem) renderReaderPage();
+}
+
+document.getElementById('collection-open').addEventListener('click', openCollection);
+document.getElementById('collection-close').addEventListener('click', closeCollection);
+document.getElementById('collection-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeCollection();
+});
 
 // ===== SETTINGS MODAL =====
 function openSettings() {
@@ -1446,6 +2122,7 @@ document.getElementById('api-key-save').addEventListener('click', () => {
   if (!key) { alert('請輸入 API Key'); return; }
   setApiKey(key);
   setModel(document.getElementById('model-input').value);
+  fsSaveSettings();
   updateApiStatus(key);
   closeSettings();
 });
@@ -1500,6 +2177,7 @@ readerBook.addEventListener('touchend', e => {
 
 // ===== INIT =====
 renderCards();
+updateCollectionBadge();
 
 // Show settings on first visit if no API key
 if (!getApiKey()) {
