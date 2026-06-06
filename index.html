@@ -188,7 +188,7 @@ body::after {
 .url-input::placeholder { color: #aaa8a2; }
 
 @media (max-width: 639px) {
-  .input-row { flex-direction: column; }
+  .input-row { flex-direction: column; align-items: flex-start; }
   .url-input { width: 100%; }
 }
 
@@ -304,7 +304,31 @@ body::after {
   .cards-grid { grid-template-columns: repeat(2, 1fr); gap: 18px; }
 }
 @media (max-width: 639px) {
-  .cards-grid { grid-template-columns: 1fr; gap: 16px; }
+  .cards-grid { grid-template-columns: 1fr; gap: 14px; }
+  /* horizontal compact card on mobile */
+  .card { display: grid; grid-template-columns: 96px 1fr; }
+  .card::before { left: 48px; } /* tape on thumb section */
+  .card-thumb {
+    width: 96px;
+    height: 100%;
+    aspect-ratio: unset;
+    object-fit: cover;
+    border-bottom: none;
+    border-right: 2px solid rgba(45,42,38,0.1);
+  }
+  .card-thumb-placeholder {
+    width: 96px;
+    height: 100%;
+    min-height: 80px;
+    aspect-ratio: unset;
+    border-bottom: none;
+    border-right: 2px solid rgba(45,42,38,0.1);
+    font-size: 28px;
+  }
+  .card-body { padding: 10px 12px 30px; }
+  .card-title { font-size: 13px; -webkit-line-clamp: 2; line-clamp: 2; margin-bottom: 6px; }
+  .card-meta { font-size: 11px; }
+  .card-delete { bottom: 6px; right: 6px; }
 }
 
 /* ===== CARD ===== */
@@ -384,6 +408,7 @@ body::after {
   margin-bottom: 10px;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -835,6 +860,13 @@ body::after {
   opacity: 0.3;
 }
 
+/* ===== WAVY KEY SENTENCE UNDERLINE ===== */
+.key-sentence {
+  text-decoration: underline wavy var(--hd-red);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 /* ===== READING PROGRESS BADGE ===== */
 .progress-badge {
   display: inline-flex;
@@ -1086,6 +1118,14 @@ mark.reader-highlight:hover::after {
   .user-name-text { display: none; }
   .logout-btn { display: none; }
   .login-btn .login-text { display: none; }
+  /* make login btn same size as icon buttons */
+  .login-btn {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50% 45% 55% 42% / 45% 55% 42% 55%;
+  }
 }
 
 /* collection btn in header */
@@ -1402,6 +1442,10 @@ function updateAuthUI(user) {
 }
 
 document.getElementById('login-btn').addEventListener('click', async () => {
+  if (window.location.protocol === 'file:') {
+    showError('請先部署到 GitHub Pages（或用 VS Code Live Server）才能使用 Google 登入。目前所有功能仍可正常使用，資料暫存在瀏覽器本機。');
+    return;
+  }
   const provider = new firebase.auth.GoogleAuthProvider();
   try { await auth.signInWithPopup(provider); }
   catch(e) { if (e.code !== 'auth/popup-closed-by-user') showError('登入失敗：' + (e.message || e.code)); }
@@ -1596,8 +1640,9 @@ const YOUTUBE_PROMPT = `請完成以下工作：
 1. 轉錄此 YouTube 影片的完整內容（若影片有字幕優先使用字幕；若無字幕，請根據音頻內容轉錄）
 2. 辨識影片語言，若非繁體中文，翻譯成繁體中文（台灣語氣，使用台灣慣用詞彙，例如「影片」而非「视频」、「網路」而非「网络」）
 3. 將內容整理成 5～8 個段落摘要，每段需有一個簡潔標題與 150～300 字正文
-4. 只回傳下列 JSON 格式，不加任何 markdown 程式碼區塊包裝、不加多餘說明文字：
-{"title":"影片摘要標題","pages":[{"title":"段落標題","content":"段落正文"},...]}`
+4. 在每段正文中，若有特別重要、值得記憶的關鍵句子，請用 [[句子]] 格式標記（每段最多標記 2 句），例如：「普通文字 [[這是重要句子]] 繼續普通文字。」
+5. 只回傳下列 JSON 格式，不加任何 markdown 程式碼區塊包裝、不加多餘說明文字：
+{"title":"影片摘要標題","pages":[{"title":"段落標題","content":"段落正文（含[[標記]]）"},...]}`
 
 // ===== ARTICLE PROMPT =====
 function buildArticlePrompt(text) {
@@ -1608,8 +1653,9 @@ ${text.slice(0, 12000)}
 請完成以下工作：
 1. 辨識文章語言，若非繁體中文，翻譯成繁體中文（台灣語氣，使用台灣慣用詞彙）
 2. 整理成 4～6 個段落摘要，每段有一個標題 + 120～250 字正文
-3. 只回傳下列 JSON 格式，不加任何 markdown 包裝或多餘說明：
-{"title":"文章摘要標題","pages":[{"title":"段落標題","content":"段落正文"},...]}`;
+3. 在每段正文中，若有特別重要、值得記憶的關鍵句子，請用 [[句子]] 格式標記（每段最多 2 句），例如：「普通文字 [[這是重要句子]] 繼續普通文字。」
+4. 只回傳下列 JSON 格式，不加任何 markdown 包裝或多餘說明：
+{"title":"文章摘要標題","pages":[{"title":"段落標題","content":"段落正文（含[[標記]]）"},...]}`;
 }
 
 // ===== PROCESS YOUTUBE =====
@@ -1918,7 +1964,7 @@ function renderReaderPage() {
     if (!page) return;
     // apply highlights to body text
     const bodyHtml = applyHighlightsToText(
-      escHtml(page.content).replace(/\n/g, '<br>'),
+      parseKeySentences(escHtml(page.content).replace(/\n/g, '<br>')),
       getHighlights().filter(h => h.itemId === readerItem.id && h.pageIndex === idx)
     );
     pageEl.innerHTML = `<div class="page-content">
@@ -1963,6 +2009,11 @@ function renderReaderPage() {
   // scroll to top
   pageEl.scrollTop = 0;
   hideHighlightPopup();
+}
+
+// ===== KEY SENTENCE PARSER =====
+function parseKeySentences(escapedHtml) {
+  return escapedHtml.replace(/\[\[(.+?)\]\]/g, '<span class="key-sentence">$1</span>');
 }
 
 // ===== HIGHLIGHT HELPERS =====
