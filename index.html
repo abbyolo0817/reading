@@ -781,6 +781,30 @@ body::after {
 }
 .page-divider-star { font-size: 12px; }
 
+/* ===== READER SELECTION BAR ===== */
+.reader-sel-bar {
+  display: none;
+  padding: 10px 18px;
+  background: rgba(247,200,75,0.28);
+  border-top: 1.5px dashed rgba(45,42,38,0.18);
+  justify-content: center;
+  flex-shrink: 0;
+}
+.reader-sel-bar.visible { display: flex; }
+#sel-highlight-btn {
+  background: var(--hd-yellow);
+  border: 2px solid var(--hd-ink);
+  border-radius: 22px;
+  padding: 8px 20px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--hd-ink);
+  color: var(--hd-ink);
+}
+#sel-highlight-btn:hover { background: #f5be30; }
+
 /* ===== READER NAVBAR ===== */
 .reader-navbar {
   display: flex;
@@ -1229,6 +1253,10 @@ mark.reader-highlight:hover::after {
     <div class="reader-page" id="reader-page">
       <!-- page content injected here -->
     </div>
+    <!-- shows when text is selected inside reader -->
+    <div class="reader-sel-bar" id="reader-sel-bar">
+      <button id="sel-highlight-btn">✦ 螢光筆標記選取的文字</button>
+    </div>
     <div class="reader-navbar">
       <button class="nav-btn" id="nav-prev" disabled>
         <svg class="hand-arrow" viewBox="0 0 28 12" fill="none">
@@ -1609,15 +1637,20 @@ async function callGemini(parts, retryOnLimit = true) {
       throw new Error(`API Key 無效或無存取權限。請確認 Key 正確，並在 Google AI Studio 確認已啟用 API。\n\n原始訊息：${msg}`);
     }
     if (res.status === 429) {
-      // 429 = rate limit (RPM) or daily quota
-      const isRateLimit = msg.toLowerCase().includes('rate') || msg.toLowerCase().includes('quota');
       if (retryOnLimit) {
-        // auto-retry once after 15 seconds
         setLoading('達到速率限制，15 秒後自動重試...');
         await new Promise(r => setTimeout(r, 15000));
         return callGemini(parts, false);
       }
-      throw new Error(`API 速率限制（RPM 超過）。\n\n免費方案每分鐘只能呼叫有限次數，請等一分鐘後再試，或到設定改用 gemini-2.0-flash-lite。\n\n原始訊息：${msg}`);
+      throw new Error(`API 速率限制（RPM 超過）。免費方案每分鐘有次數限制，請等一分鐘後再試，或到設定改用其他模型。\n\n原始訊息：${msg}`);
+    }
+    if (res.status === 503 || res.status === 500 || msg.toLowerCase().includes('high demand') || msg.toLowerCase().includes('overloaded')) {
+      if (retryOnLimit) {
+        setLoading('Gemini 伺服器忙碌，20 秒後自動重試...');
+        await new Promise(r => setTimeout(r, 20000));
+        return callGemini(parts, false);
+      }
+      throw new Error(`Gemini 伺服器目前流量過高，請稍後再試，或到設定換用其他模型。\n\n原始訊息：${msg}`);
     }
     throw new Error(`Gemini API 錯誤：${msg}`);
   }
@@ -2066,45 +2099,66 @@ function showHighlightPopup(x, y, text) {
 }
 function hideHighlightPopup() {
   document.getElementById('highlight-popup').classList.remove('visible');
+  document.getElementById('reader-sel-bar')?.classList.remove('visible');
   pendingHighlightText = '';
 }
 
-document.getElementById('reader-page').addEventListener('mouseup', handleTextSelection);
-document.getElementById('reader-page').addEventListener('touchend', handleTextSelection);
-
-function handleTextSelection() {
-  setTimeout(() => {  // let selection settle
+// unified selection handler via selectionchange (works on both desktop & mobile)
+let selChangeTimer = null;
+document.addEventListener('selectionchange', () => {
+  clearTimeout(selChangeTimer);
+  selChangeTimer = setTimeout(() => {
+    if (!readerItem || readerPage === 0) return;
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) { hideHighlightPopup(); return; }
-    const text = sel.toString().trim();
-    if (text.length < 2 || readerPage === 0) { hideHighlightPopup(); return; }
-    // only allow selection inside .page-body
-    const range = sel.getRangeAt(0);
+    const text = sel?.toString().trim() || '';
     const pageBody = document.querySelector('.page-body');
-    if (!pageBody || !pageBody.contains(range.commonAncestorContainer)) {
-      hideHighlightPopup(); return;
-    }
-    const rect = range.getBoundingClientRect();
-    showHighlightPopup(rect.left + rect.width / 2, rect.top, text);
-  }, 10);
-}
+    const inBody = pageBody && sel && sel.rangeCount > 0
+      && pageBody.contains(sel.getRangeAt(0).commonAncestorContainer);
+    const bar = document.getElementById('reader-sel-bar');
 
-document.getElementById('highlight-popup').addEventListener('click', () => {
+    if (text.length >= 2 && inBody) {
+      pendingHighlightText = text;
+      bar.classList.add('visible');
+      // desktop: also show floating popup near selection
+      if (!('ontouchstart' in window)) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        showHighlightPopup(rect.left + rect.width / 2, rect.top, text);
+      }
+    } else {
+      // small delay so tapping the bar button still works
+      setTimeout(() => {
+        const s2 = window.getSelection();
+        if (!s2 || s2.isCollapsed) {
+          bar.classList.remove('visible');
+          hideHighlightPopup();
+          pendingHighlightText = '';
+        }
+      }, 300);
+    }
+  }, 50);
+});
+
+function doHighlight() {
   if (!pendingHighlightText || !readerItem || readerPage === 0) return;
   const pages = readerItem.pages || [];
   const pageIndex = readerPage - 1;
   const pageTitle = pages[pageIndex]?.title || '';
   addHighlight(readerItem.id, readerItem.title, pageIndex, pageTitle, pendingHighlightText);
   window.getSelection()?.removeAllRanges();
+  document.getElementById('reader-sel-bar').classList.remove('visible');
   hideHighlightPopup();
+  pendingHighlightText = '';
   renderReaderPage();
   updateCollectionBadge();
   if (document.getElementById('collection-overlay').classList.contains('visible')) {
     renderCollectionPanel();
   }
-});
+}
 
-// hide on click outside
+document.getElementById('sel-highlight-btn').addEventListener('click', doHighlight);
+document.getElementById('highlight-popup').addEventListener('click', doHighlight);
+
+// hide popup on click outside (desktop)
 document.addEventListener('mousedown', e => {
   if (!e.target.closest('#highlight-popup') && !e.target.closest('.page-body')) {
     hideHighlightPopup();
