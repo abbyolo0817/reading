@@ -645,6 +645,21 @@ body::after {
 }
 .reader-close:hover { background: #fde8e6; border-color: var(--hd-red); color: var(--hd-red); }
 
+.reader-delete-btn {
+  background: none;
+  border: none;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--hd-red);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.reader-delete-btn:hover { background: #fde8e6; }
+
 /* page content area */
 .reader-page {
   flex: 1;
@@ -1248,7 +1263,10 @@ mark.reader-highlight:hover::after {
   <div class="reader-book">
     <div class="reader-topbar">
       <a class="reader-source-link" id="reader-source-link" href="#" target="_blank">—</a>
-      <button class="reader-close" id="reader-close">✕</button>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="reader-delete-btn" id="reader-delete-btn">刪除</button>
+        <button class="reader-close" id="reader-close">✕</button>
+      </div>
     </div>
     <div class="reader-page" id="reader-page">
       <!-- page content injected here -->
@@ -1909,7 +1927,9 @@ function renderCards() {
     const typeLabel = item.type === 'youtube' ? '▶ YouTube' : '📄 文章';
     const thumbHtml = item.thumbnail
       ? `<img class="card-thumb" src="${escHtml(item.thumbnail)}" alt="" onerror="this.style.display='none'">`
-      : `<div class="card-thumb-placeholder">${item.type === 'youtube' ? '▶' : '📄'}</div>`;
+      : item.type === 'article'
+        ? `<img class="card-thumb" src="文章封面圖.png" alt="文章">`
+        : `<div class="card-thumb-placeholder">▶</div>`;
 
     const prog = getItemProgress(item.id);
     const pl = PROGRESS_LABEL[prog.status];
@@ -1924,7 +1944,6 @@ function renderCards() {
       <span class="card-pages-badge">${pageCount} 頁</span>
     </div>
   </div>
-  <button class="card-delete" data-id="${item.id}" title="刪除" onclick="deleteCard('${item.id}',event)">✕</button>
 </div>`;
   }).join('');
 
@@ -2003,7 +2022,9 @@ function renderReaderPage() {
     // Cover page
     const thumbHtml = readerItem.thumbnail
       ? `<img class="cover-thumb" src="${escHtml(readerItem.thumbnail)}" alt="" onerror="this.style.display='none'">`
-      : `<div class="cover-thumb-placeholder">${readerItem.type === 'youtube' ? '▶' : '📄'}</div>`;
+      : readerItem.type === 'article'
+        ? `<img class="cover-thumb" src="文章封面圖.png" alt="文章">`
+        : `<div class="cover-thumb-placeholder">▶</div>`;
     const typeLabel = readerItem.type === 'youtube' ? 'YouTube 影片' : '網路文章';
 
     pageEl.innerHTML = `<div class="page-cover">
@@ -2155,7 +2176,16 @@ function doHighlight() {
   }
 }
 
+// on mobile: touchstart fires before selection is cleared, save text here
+document.getElementById('sel-highlight-btn').addEventListener('touchstart', e => {
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed) pendingHighlightText = sel.toString().trim();
+}, { passive: true });
+// on desktop: prevent mousedown from clearing selection
+document.getElementById('sel-highlight-btn').addEventListener('mousedown', e => e.preventDefault());
+
 document.getElementById('sel-highlight-btn').addEventListener('click', doHighlight);
+document.getElementById('highlight-popup').addEventListener('mousedown', e => e.preventDefault());
 document.getElementById('highlight-popup').addEventListener('click', doHighlight);
 
 // hide popup on click outside (desktop)
@@ -2271,6 +2301,16 @@ document.getElementById('url-input').addEventListener('keydown', e => {
 document.getElementById('error-close').addEventListener('click', hideError);
 
 document.getElementById('reader-close').addEventListener('click', closeReader);
+document.getElementById('reader-delete-btn').addEventListener('click', () => {
+  if (!readerItem) return;
+  if (!confirm('確定刪除這張卡片？')) return;
+  const id = readerItem.id;
+  const items = loadItems().filter(it => it.id !== id);
+  saveItems(items);
+  fsRemove('items', id);
+  closeReader();
+  renderCards();
+});
 document.getElementById('reader-overlay').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeReader();
 });
