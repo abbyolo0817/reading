@@ -2182,7 +2182,10 @@ document.getElementById('sel-highlight-btn').addEventListener('touchstart', e =>
   if (sel && !sel.isCollapsed) pendingHighlightText = sel.toString().trim();
 }, { passive: true });
 // on desktop: prevent mousedown from clearing selection
-document.getElementById('sel-highlight-btn').addEventListener('mousedown', e => e.preventDefault());
+document.getElementById('sel-highlight-btn').addEventListener('mousedown', e => {
+  e.preventDefault();
+  e.stopPropagation(); // prevent document mousedown from clearing pendingHighlightText before click fires
+});
 
 document.getElementById('sel-highlight-btn').addEventListener('click', doHighlight);
 document.getElementById('highlight-popup').addEventListener('mousedown', e => e.preventDefault());
@@ -2190,7 +2193,7 @@ document.getElementById('highlight-popup').addEventListener('click', doHighlight
 
 // hide popup on click outside (desktop)
 document.addEventListener('mousedown', e => {
-  if (!e.target.closest('#highlight-popup') && !e.target.closest('.page-body')) {
+  if (!e.target.closest('#highlight-popup') && !e.target.closest('.page-body') && !e.target.closest('#reader-sel-bar')) {
     hideHighlightPopup();
   }
 });
