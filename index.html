@@ -1087,6 +1087,22 @@ mark.reader-highlight:hover::after {
 }
 .highlight-del:hover { opacity: 1; color: var(--hd-red); }
 
+/* ===== GENERATING CARD OVERLAY ===== */
+.card.is-generating {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.card-gen-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.55);
+  z-index: 3;
+  border-radius: inherit;
+}
+
 /* ===== HEADER RIGHT GROUP ===== */
 .header-right {
   display: flex;
@@ -1185,19 +1201,14 @@ mark.reader-highlight:hover::after {
 .collection-btn svg { width: 20px; height: 20px; }
 .collection-badge {
   position: absolute;
-  top: -5px; right: -5px;
+  top: -3px; right: -3px;
   background: var(--hd-red);
-  color: white;
-  font-size: 9px;
-  font-weight: 700;
-  font-family: var(--font-display);
-  width: 17px; height: 17px;
+  width: 10px; height: 10px;
   border-radius: 50%;
+  border: 2px solid var(--hd-paper);
   display: none;
-  align-items: center;
-  justify-content: center;
 }
-.collection-badge.visible { display: flex; }
+.collection-badge.visible { display: block; }
 </style>
 </head>
 <body>
@@ -1883,25 +1894,58 @@ async function handleSubmit() {
     return;
   }
 
+  // Add pending card immediately so user can do other things while generating
+  const pendingId = generateId();
+  const videoId = parseYouTubeId(url);
+  const pendingItem = {
+    id: pendingId,
+    url,
+    type: videoId ? 'youtube' : 'article',
+    title: '正在生成中...',
+    thumbnail: '',
+    dateAdded: new Date().toISOString(),
+    pages: [],
+    _generating: true,
+  };
+  const allItems = loadItems();
+  allItems.unshift(pendingItem);
+  saveItems(allItems);
+  renderCards();
+  document.getElementById('url-input').value = '';
+  setLoading('AI 正在背景處理，可繼續使用...');
+
+  // Wake Lock: prevent mobile browser from suspending the tab during generation
+  let wl = null;
+  if ('wakeLock' in navigator) {
+    try { wl = await navigator.wakeLock.request('screen'); } catch {}
+  }
+
   try {
     let item;
-    const videoId = parseYouTubeId(url);
     if (videoId) {
       item = await processYouTube(url, videoId);
     } else {
       item = await processArticle(url);
     }
+    item.id = pendingId; // reuse same ID so card updates in place
 
-    const items = loadItems();
-    items.unshift(item);
-    saveItems(items);
+    const current = loadItems();
+    const idx = current.findIndex(i => i.id === pendingId);
+    if (idx !== -1) current[idx] = item;
+    else current.unshift(item);
+    saveItems(current);
     fsPush('items', item.id, item);
     renderCards();
-    document.getElementById('url-input').value = '';
     clearLoading();
   } catch (e) {
+    // Remove pending card and show error so user can retry
+    const current = loadItems();
+    saveItems(current.filter(i => i.id !== pendingId));
+    renderCards();
     clearLoading();
     showError(e.message || '處理失敗，請稍後再試');
+  } finally {
+    wl?.release().catch(() => {});
   }
 }
 
@@ -1926,23 +1970,29 @@ function renderCards() {
     const dateStr = formatDate(item.dateAdded);
     const pageCount = item.pages?.length || 0;
     const typeLabel = item.type === 'youtube' ? '▶ YouTube' : '📄 文章';
+    const isGenerating = !!item._generating;
     const thumbHtml = item.thumbnail
       ? `<img class="card-thumb" src="${escHtml(item.thumbnail)}" alt="" onerror="this.style.display='none'">`
       : item.type === 'article'
         ? `<img class="card-thumb" src="文章封面圖.png" alt="文章">`
         : `<div class="card-thumb-placeholder">▶</div>`;
 
+    const genOverlay = isGenerating
+      ? `<div class="card-gen-overlay"><div class="spinner" style="width:32px;height:32px;border-color:rgba(45,42,38,0.3);border-top-color:var(--hd-red);"></div></div>`
+      : '';
+
     const prog = getItemProgress(item.id);
     const pl = PROGRESS_LABEL[prog.status];
-    return `<div class="card ${color}" data-id="${item.id}" role="button" tabindex="0" aria-label="開啟 ${escHtml(item.title)}">
+    return `<div class="card ${color}${isGenerating ? ' is-generating' : ''}" data-id="${item.id}" role="button" tabindex="0" aria-label="開啟 ${escHtml(item.title)}">
   ${thumbHtml}
+  ${genOverlay}
   <div class="card-body">
     <div class="card-type-badge">${typeLabel}</div>
     <div class="card-title">${escHtml(item.title)}</div>
-    <span class="progress-badge ${pl.cls}">${pl.icon} ${pl.text}</span>
+    ${isGenerating ? '' : `<span class="progress-badge ${pl.cls}">${pl.icon} ${pl.text}</span>`}
     <div class="card-meta">
       <span>${dateStr}</span>
-      <span class="card-pages-badge">${pageCount} 頁</span>
+      ${isGenerating ? '' : `<span class="card-pages-badge">${pageCount} 頁</span>`}
     </div>
   </div>
 </div>`;
@@ -1950,6 +2000,7 @@ function renderCards() {
 
   // attach click handlers
   grid.querySelectorAll('.card').forEach(card => {
+    if (card.classList.contains('is-generating')) return;
     card.addEventListener('click', () => {
       const id = card.dataset.id;
       const item = loadItems().find(it => it.id === id);
@@ -2100,11 +2151,12 @@ function applyHighlightsToText(escapedHtml, highlights) {
   let result = escapedHtml;
   highlights.forEach(h => {
     const escapedText = escHtml(h.text);
-    // escape regex special chars
-    const pattern = escapedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Mobile selection uses \n where HTML has <br> — normalize before matching
+    const htmlText = escapedText.replace(/\r?\n/g, '<br>');
+    const pattern = htmlText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(pattern, 'g');
     result = result.replace(regex,
-      `<mark class="reader-highlight" data-hid="${h.id}">${escapedText}</mark>`);
+      `<mark class="reader-highlight" data-hid="${h.id}">${htmlText}</mark>`);
   });
   return result;
 }
@@ -2203,7 +2255,6 @@ document.addEventListener('mousedown', e => {
 function updateCollectionBadge() {
   const count = getHighlights().length;
   const badge = document.getElementById('collection-badge');
-  badge.textContent = count > 99 ? '99+' : count;
   badge.classList.toggle('visible', count > 0);
 }
 
